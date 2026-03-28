@@ -1,0 +1,15 @@
+{
+  "commands": {
+    "timeout_seconds": 10,
+    "long_timeout_seconds": 30
+  },
+  "ollama": {
+    "base_url": "http://127.0.0.1:11434",
+    "timeout_seconds": 3
+  },
+  "docker": {
+    "smoke_test_image": "hello-world",
+    "allow_image_pull": false,
+    "run_smoke_test": true
+  }
+}

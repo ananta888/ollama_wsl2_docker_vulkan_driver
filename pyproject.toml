@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.24.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ollama-env-audit"
+version = "0.1.0"
+description = "Diagnostic and reporting toolkit for Ollama on Windows 11, WSL2, and Docker with AMD APU focus."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Open Source Contributors" }
+]
+dependencies = [
+  "httpx>=0.26,<1.0",
+  "pydantic>=1.10,<3.0",
+  "rich>=13.7,<14.0",
+  "typer>=0.9,<1.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4,<9.0"
+]
+
+[project.scripts]
+ollama-env-audit = "ollama_env_audit.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ollama_env_audit"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
+testpaths = ["tests"]
