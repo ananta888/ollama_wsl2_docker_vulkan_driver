@@ -76,6 +76,7 @@ ollama-env-audit serve-web --host 127.0.0.1 --port 8765
 - Docker-GPU-Support wird weiterhin nur dann als wahrscheinlich markiert, wenn sowohl Host-GPU-Geraetekandidaten sichtbar sind als auch Containerstart nachweisbar funktioniert. Das ist bewusst konservativ.
 - `run --execute` startet bewusst nur klar definierte Kommandos und nutzt keine dynamisch zusammengebauten Shell-Strings.
 - Ein erfolgreicher Runtime-Start beweist noch keine GPU-Beschleunigung. Diese Aussage entsteht erst aus kombinierter Evidenz und Benchmarking.
+- Docker-Runs nutzen ein persistentes Volume fuer `/root/.ollama`, damit einmal geladene Modelle fuer spaetere Testlaeufe wiederverwendbar bleiben.
 
 ## Reporting
 

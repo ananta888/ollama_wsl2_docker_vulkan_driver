@@ -13,7 +13,8 @@
     "run_smoke_test": true,
     "runtime_image": "ollama/ollama:latest",
     "container_name": "ollama-env-audit",
-    "published_port": 11434
+    "published_port": 11434,
+    "model_cache_volume": "ollama-env-audit-model-cache"
   },
   "benchmark": {
     "default_model": "llama3.2:3b",

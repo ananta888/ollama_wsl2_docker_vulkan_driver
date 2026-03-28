@@ -27,6 +27,7 @@ class DockerSettings(BaseModel):
     runtime_image: str = "ollama/ollama:latest"
     container_name: str = "ollama-env-audit"
     published_port: int = Field(default=11434, ge=1, le=65535)
+    model_cache_volume: str = "ollama-env-audit-model-cache"
 
 
 class BenchmarkSettings(BaseModel):

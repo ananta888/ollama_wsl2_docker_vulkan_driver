@@ -100,6 +100,8 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
             self._config.docker.container_name,
             "-p",
             f"{self._config.docker.published_port}:11434",
+            "-v",
+            f"{self._config.docker.model_cache_volume}:/root/.ollama",
         ]
         for device in ("/dev/dxg", "/dev/kfd", "/dev/dri"):
             if Path(device).exists():
@@ -116,7 +118,10 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
                 endpoint=self.endpoint,
                 command=command,
                 note="Dry-run only. No Docker container was started.",
-                details=["Device pass-through flags are included only when host device nodes are visible from Linux."],
+                details=[
+                    "Device pass-through flags are included only when host device nodes are visible from Linux.",
+                    f"Model cache volume: {self._config.docker.model_cache_volume}",
+                ],
             )
 
         result = self._executor.execute(command, timeout=self._config.commands.long_timeout_seconds)
@@ -129,7 +134,10 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
                 note="Docker container launch command completed successfully.",
                 launched=True,
                 reference=result.stdout.strip() or None,
-                details=["Validate actual GPU use from inside the container before trusting acceleration."],
+                details=[
+                    f"Model cache volume: {self._config.docker.model_cache_volume}",
+                    "Validate actual GPU use from inside the container before trusting acceleration.",
+                ],
             )
         return RuntimeRunResult(
             mode=self.mode,
