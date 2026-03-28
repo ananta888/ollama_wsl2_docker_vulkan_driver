@@ -22,9 +22,11 @@ class MarkdownReportRenderer:
             f"- Recommended mode: `{report.recommendation.recommended_mode.value if report.recommendation.recommended_mode else 'none'}`",
             f"- Confidence: `{report.recommendation.confidence.value}`",
             "",
-            "## Recommendation rationale",
+            "## Headline findings",
             "",
         ]
+        lines.extend(f"- {item}" for item in self._headline_findings(report))
+        lines.extend(["", "## Recommendation rationale", ""])
         lines.extend(f"- {item}" for item in report.recommendation.rationale or ["No recommendation rationale available."])
         if report.recommendation.warnings:
             lines.extend(["", "## Recommendation warnings", ""])
@@ -32,6 +34,10 @@ class MarkdownReportRenderer:
         if report.risks:
             lines.extend(["", "## Global risks", ""])
             lines.extend(f"- {item}" for item in report.risks)
+        remediation = self._wsl_vulkan_remediation(report)
+        if remediation:
+            lines.extend(["", "## AMD WSL2 Vulkan remediation", ""])
+            lines.extend(f"- {item}" for item in remediation)
         lines.extend(["", "## Probes", ""])
         lines.extend(self._section("Windows", report.windows.status.value, report.windows.observations))
         lines.extend(self._section("WSL", report.wsl.status.value, report.wsl.observations, report.wsl.gpu_evidence))
@@ -77,9 +83,52 @@ class MarkdownReportRenderer:
         lines.append("")
         return lines
 
+    @staticmethod
+    def _headline_findings(report: AuditReport) -> list[str]:
+        findings: list[str] = []
+        if report.wsl.wsl_dozen_ready:
+            findings.append("WSL Vulkan is GPU-backed via `Dozen` on `Microsoft Direct3D12`.")
+        elif report.wsl.vulkan_uses_cpu:
+            findings.append("WSL Vulkan is currently falling back to `llvmpipe`/CPU.")
+        if report.wsl.vulkan_device_name:
+            findings.append(f"WSL Vulkan device: `{report.wsl.vulkan_device_name}`")
+        if report.wsl.vulkan_driver_name:
+            findings.append(f"WSL Vulkan driver: `{report.wsl.vulkan_driver_name}`")
+        if report.docker.can_run_containers and report.wsl.wsl_dozen_ready:
+            findings.append("`docker-wsl` can reuse the validated WSL Vulkan path when the container image includes Mesa Dozen support.")
+        return findings or ["No standout GPU findings were captured."]
+
+    @staticmethod
+    def _wsl_vulkan_remediation(report: AuditReport) -> list[str]:
+        if not report.wsl.is_wsl or not report.wsl.devices.get("/dev/dxg", False):
+            return []
+        if report.wsl.wsl_dozen_ready:
+            return [
+                "Use a container image with `mesa-vulkan-drivers` from `ppa:kisak/kisak-mesa`.",
+                "Mount `/usr/lib/wsl:/usr/lib/wsl:ro` into the container.",
+                "Set `OLLAMA_VULKAN=1` and `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/dzn_icd.json`.",
+            ]
+        if report.wsl.vulkan_uses_cpu or not report.wsl.dzn_icd_present:
+            return [
+                "Install a Dozen-enabled Mesa build in Ubuntu, for example `ppa:kisak/kisak-mesa` on Ubuntu 24.04.",
+                "Verify `/usr/share/vulkan/icd.d/dzn_icd.json` exists after the Mesa upgrade.",
+                "Re-run `vulkaninfo --summary` until the device changes from `llvmpipe` to `Microsoft Direct3D12 (...)` with driver `Dozen`.",
+                "Only then expect Ollama in Docker-on-WSL to reach the AMD GPU.",
+            ]
+        return []
+
 
 class HtmlReportRenderer:
     def render(self, report: AuditReport) -> str:
+        headline_findings = "".join(
+            f"<li>{escape(item)}</li>" for item in MarkdownReportRenderer._headline_findings(report)
+        )
+        recommendation_warnings = "".join(
+            f"<li>{escape(item)}</li>" for item in report.recommendation.warnings
+        )
+        remediation = "".join(
+            f"<li>{escape(item)}</li>" for item in MarkdownReportRenderer._wsl_vulkan_remediation(report)
+        )
         assessments = "".join(
             f"<li><strong>{escape(assessment.mode.value)}</strong> - available={assessment.available}, gpu={assessment.supports_gpu}, confidence={escape(assessment.confidence.value)}<ul>"
             + "".join(f"<li>{escape(reason)}</li>" for reason in assessment.reasons)
@@ -113,6 +162,12 @@ class HtmlReportRenderer:
     <p>Confidence: <code>{escape(report.recommendation.confidence.value)}</code></p>
     <ul>{''.join(f'<li>{escape(item)}</li>' for item in report.recommendation.rationale)}</ul>
   </div>
+  <div class="card">
+    <h2>Headline findings</h2>
+    <ul>{headline_findings}</ul>
+  </div>
+  {f'<div class="card"><h2>Recommendation warnings</h2><ul>{recommendation_warnings}</ul></div>' if recommendation_warnings else ''}
+  {f'<div class="card"><h2>AMD WSL2 Vulkan remediation</h2><ul>{remediation}</ul></div>' if remediation else ''}
   <div class="card">
     <h2>Runtime assessments</h2>
     <ul>{assessments}</ul>

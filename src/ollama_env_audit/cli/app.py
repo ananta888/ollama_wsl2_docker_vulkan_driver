@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from ollama_env_audit.application import InspectionService, LocalWebService, RuntimeService, ServiceContainer
@@ -21,6 +22,39 @@ from ollama_env_audit.runtime import DockerWSLLauncher, WindowsNativeLauncher, W
 
 ServiceFactory = Callable[[AppConfig], ServiceContainer]
 console = Console()
+
+
+def _wsl_status_summary(report) -> str:
+    if report.wsl.wsl_dozen_ready:
+        return "Dozen on Microsoft Direct3D12"
+    if report.wsl.vulkan_uses_cpu:
+        return "llvmpipe / CPU fallback"
+    if report.wsl.vulkan_driver_name:
+        return report.wsl.vulkan_driver_name
+    return ", ".join(obs.message for obs in report.wsl.observations) or "n/a"
+
+
+def _docker_status_summary(report) -> str:
+    if report.wsl.wsl_dozen_ready and report.docker.engine_reachable:
+        return "Ready with Dozen-enabled image"
+    return ", ".join(obs.message for obs in report.docker.observations) or "n/a"
+
+
+def _remediation_lines(report) -> list[str]:
+    if not report.wsl.is_wsl or not report.wsl.devices.get("/dev/dxg", False):
+        return []
+    if report.wsl.wsl_dozen_ready:
+        return [
+            "WSL Vulkan already uses Dozen.",
+            "For Docker keep /usr/lib/wsl mounted read-only and use a Dozen-enabled image.",
+        ]
+    if report.wsl.vulkan_uses_cpu or not report.wsl.dzn_icd_present:
+        return [
+            "Install Dozen-enabled Mesa in Ubuntu, e.g. ppa:kisak/kisak-mesa.",
+            "Re-check vulkaninfo until Dozen replaces llvmpipe.",
+            "Then rebuild the Docker image with mesa-vulkan-drivers inside the container.",
+        ]
+    return []
 
 
 def create_default_services(config: AppConfig) -> ServiceContainer:
@@ -66,11 +100,18 @@ def create_app(service_factory: Optional[ServiceFactory] = None) -> typer.Typer:
         table.add_column("Status")
         table.add_column("Notes")
         table.add_row("Windows", report.windows.status.value, ", ".join(obs.message for obs in report.windows.observations) or "n/a")
-        table.add_row("WSL", report.wsl.status.value, ", ".join(obs.message for obs in report.wsl.observations) or "n/a")
-        table.add_row("Docker", report.docker.status.value, ", ".join(obs.message for obs in report.docker.observations) or "n/a")
+        table.add_row("WSL", report.wsl.status.value, _wsl_status_summary(report))
+        table.add_row("Docker", report.docker.status.value, _docker_status_summary(report))
         table.add_row("Ollama", report.ollama.status.value, ", ".join(obs.message for obs in report.ollama.observations) or "n/a")
         console.print(table)
         console.print(f"Recommended mode: [bold]{report.recommendation.recommended_mode.value if report.recommendation.recommended_mode else 'none'}[/bold]")
+        if report.wsl.vulkan_device_name or report.wsl.vulkan_driver_name:
+            console.print(
+                f"WSL Vulkan: device={report.wsl.vulkan_device_name or 'n/a'} | driver={report.wsl.vulkan_driver_name or 'n/a'}"
+            )
+        remediation = _remediation_lines(report)
+        if remediation:
+            console.print(Panel("\n".join(f"- {item}" for item in remediation), title="AMD WSL2 Vulkan", expand=False))
 
     @app.command()
     def recommend(config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file.")) -> None:
@@ -82,6 +123,9 @@ def create_app(service_factory: Optional[ServiceFactory] = None) -> typer.Typer:
             console.print(f"- {item}")
         for item in recommendation.warnings:
             console.print(f"! {item}")
+        remediation = _remediation_lines(report)
+        if remediation:
+            console.print(Panel("\n".join(f"- {item}" for item in remediation), title="AMD WSL2 Vulkan", expand=False))
 
     @app.command()
     def report(

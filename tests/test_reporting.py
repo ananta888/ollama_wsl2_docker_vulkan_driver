@@ -14,12 +14,20 @@ from ollama_env_audit.domain import (
 from ollama_env_audit.reporting import HtmlReportRenderer, JsonReportRenderer, MarkdownReportRenderer
 
 
-
 def make_report() -> AuditReport:
     return AuditReport(
         tool_version="0.1.0",
         windows=WindowsInfo(status=ProbeStatus.OK),
-        wsl=WSLInfo(status=ProbeStatus.OK, is_wsl=True, gpu_evidence=["Device node detected: /dev/dxg"]),
+        wsl=WSLInfo(
+            status=ProbeStatus.OK,
+            is_wsl=True,
+            devices={"/dev/dxg": True},
+            gpu_evidence=["Device node detected: /dev/dxg"],
+            vulkan_device_name="llvmpipe (LLVM 20.1.2, 256 bits)",
+            vulkan_driver_name="llvmpipe",
+            vulkan_uses_cpu=True,
+            dzn_icd_present=False,
+        ),
         docker=DockerInfo(status=ProbeStatus.WARNING, engine_reachable=True),
         ollama=OllamaInfo(status=ProbeStatus.OK, binary_available=True),
         runtime_assessments=[
@@ -47,12 +55,10 @@ def make_report() -> AuditReport:
     )
 
 
-
 def test_json_renderer_includes_recommendation() -> None:
     rendered = JsonReportRenderer().render(make_report())
 
     assert '"recommended_mode": "windows-native"' in rendered
-
 
 
 def test_markdown_renderer_includes_benchmarks() -> None:
@@ -61,7 +67,9 @@ def test_markdown_renderer_includes_benchmarks() -> None:
     assert "# Ollama Environment Audit" in rendered
     assert "## Benchmarks" in rendered
     assert "windows-native" in rendered
-
+    assert "## Headline findings" in rendered
+    assert "## AMD WSL2 Vulkan remediation" in rendered
+    assert "llvmpipe" in rendered
 
 
 def test_html_renderer_includes_json_link() -> None:
@@ -69,3 +77,4 @@ def test_html_renderer_includes_json_link() -> None:
 
     assert "/report.json" in rendered
     assert "ollama-env-audit" in rendered
+    assert "AMD WSL2 Vulkan remediation" in rendered

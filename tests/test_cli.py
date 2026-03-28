@@ -44,11 +44,20 @@ class StaticLauncher:
         return RuntimeRunResult(mode=self.mode, status=ProbeStatus.SKIPPED if dry_run else ProbeStatus.OK, command=self.build_command(), note="planned")
 
 
-
 def build_services(_config):
     inspection = InspectionService(
         windows_probe=StaticProbe(WindowsInfo(status=ProbeStatus.OK)),
-        wsl_probe=StaticProbe(WSLInfo(status=ProbeStatus.OK, is_wsl=True)),
+        wsl_probe=StaticProbe(
+            WSLInfo(
+                status=ProbeStatus.OK,
+                is_wsl=True,
+                devices={"/dev/dxg": True},
+                vulkan_device_name="llvmpipe (LLVM 20.1.2, 256 bits)",
+                vulkan_driver_name="llvmpipe",
+                vulkan_uses_cpu=True,
+                dzn_icd_present=False,
+            )
+        ),
         docker_probe=StaticProbe(DockerInfo(status=ProbeStatus.WARNING, engine_reachable=True)),
         ollama_probe=StaticProbe(OllamaInfo(status=ProbeStatus.OK, binary_available=True)),
         recommendation_engine=RecommendationEngine(),
@@ -61,7 +70,6 @@ def build_services(_config):
     )
 
 
-
 def test_recommend_command_outputs_mode() -> None:
     runner = CliRunner()
     app = create_app(service_factory=build_services)
@@ -70,7 +78,7 @@ def test_recommend_command_outputs_mode() -> None:
 
     assert result.exit_code == 0
     assert "Mode:" in result.stdout
-
+    assert "AMD WSL2 Vulkan" in result.stdout
 
 
 def test_report_command_writes_json_output(tmp_path) -> None:
@@ -85,7 +93,6 @@ def test_report_command_writes_json_output(tmp_path) -> None:
     assert "recommended_mode" in output.read_text(encoding="utf-8")
 
 
-
 def test_run_command_prints_launch_plan() -> None:
     runner = CliRunner()
     app = create_app(service_factory=build_services)
@@ -94,3 +101,14 @@ def test_run_command_prints_launch_plan() -> None:
 
     assert result.exit_code == 0
     assert "Command:" in result.stdout
+
+
+def test_inspect_command_shows_wsl_vulkan_summary() -> None:
+    runner = CliRunner()
+    app = create_app(service_factory=build_services)
+
+    result = runner.invoke(app, ["inspect"])
+
+    assert result.exit_code == 0
+    assert "WSL Vulkan:" in result.stdout
+    assert "AMD WSL2 Vulkan" in result.stdout
