@@ -1,15 +1,20 @@
-"""Application services that orchestrate probes and recommendations."""
+"""Application services that orchestrate probes, recommendation, runtime launching, and benchmarking."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Mapping
+
 from ollama_env_audit import __version__
-from ollama_env_audit.domain.models import AuditReport
-from ollama_env_audit.domain.protocols import Probe
+from ollama_env_audit.benchmark import BenchmarkService
+from ollama_env_audit.domain.enums import RuntimeMode
+from ollama_env_audit.domain.models import AuditReport, BenchmarkResult, RuntimeRunResult
+from ollama_env_audit.domain.protocols import Probe, RuntimeLauncher
 from ollama_env_audit.recommendation import RecommendationEngine
 
 
 class InspectionService:
-    """Collects probe results and builds a unified audit report."""
+    """Collect probe results and build a unified audit report."""
 
     def __init__(
         self,
@@ -43,3 +48,20 @@ class InspectionService:
             recommendation=recommendation,
             risks=risks,
         )
+
+
+class RuntimeService:
+    """Manage mode-specific launcher interactions."""
+
+    def __init__(self, launchers: Mapping[RuntimeMode, RuntimeLauncher]) -> None:
+        self._launchers = dict(launchers)
+
+    def launch(self, mode: RuntimeMode, *, dry_run: bool = True) -> RuntimeRunResult:
+        return self._launchers[mode].launch(dry_run=dry_run)
+
+
+@dataclass(frozen=True)
+class ServiceContainer:
+    inspection: InspectionService
+    runtime: RuntimeService
+    benchmark: BenchmarkService

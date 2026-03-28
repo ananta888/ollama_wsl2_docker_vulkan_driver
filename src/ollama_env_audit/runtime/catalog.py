@@ -30,3 +30,10 @@ RUNTIME_CATALOG: tuple[RuntimeDescriptor, ...] = (
         description="Ollama running inside Docker from a WSL2 environment.",
     ),
 )
+
+
+def get_runtime_descriptor(mode: RuntimeMode) -> RuntimeDescriptor:
+    for descriptor in RUNTIME_CATALOG:
+        if descriptor.mode == mode:
+            return descriptor
+    raise ValueError(f"Unknown runtime mode: {mode}")

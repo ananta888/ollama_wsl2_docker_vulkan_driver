@@ -1,5 +1,5 @@
 """Reporting exports."""
 
-from .renderers import JsonReportRenderer, MarkdownReportRenderer
+from .renderers import HtmlReportRenderer, JsonReportRenderer, MarkdownReportRenderer
 
-__all__ = ["JsonReportRenderer", "MarkdownReportRenderer"]
+__all__ = ["HtmlReportRenderer", "JsonReportRenderer", "MarkdownReportRenderer"]

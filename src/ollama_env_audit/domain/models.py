@@ -25,6 +25,17 @@ class CommandResult(BaseModel):
         return self.exit_code == 0 and not self.timed_out and self.error_type is None
 
 
+class ProcessLaunchResult(BaseModel):
+    command: list[str]
+    pid: int | None = None
+    duration_seconds: float = 0.0
+    error_type: str | None = None
+
+    @property
+    def succeeded(self) -> bool:
+        return self.pid is not None and self.error_type is None
+
+
 class Observation(BaseModel):
     severity: Severity
     message: str
@@ -56,17 +67,25 @@ class WSLInfo(BaseModel):
     kernel: str | None = None
     is_wsl: bool = False
     devices: dict[str, bool] = Field(default_factory=dict)
+    device_details: dict[str, str] = Field(default_factory=dict)
     tools: dict[str, bool] = Field(default_factory=dict)
+    tool_details: dict[str, str] = Field(default_factory=dict)
     gpu_support_likely: bool | None = None
+    gpu_evidence: list[str] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
 
 
 class DockerInfo(BaseModel):
     status: ProbeStatus = ProbeStatus.UNAVAILABLE
     version: str | None = None
+    server_version: str | None = None
+    context: str | None = None
     engine_reachable: bool | None = None
     can_run_containers: bool | None = None
     gpu_support_likely: bool | None = None
+    runtimes: list[str] = Field(default_factory=list)
+    gpu_device_candidates: list[str] = Field(default_factory=list)
+    gpu_evidence: list[str] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
 
 
@@ -81,7 +100,10 @@ class OllamaInfo(BaseModel):
     status: ProbeStatus = ProbeStatus.UNAVAILABLE
     binary_available: bool = False
     version: str | None = None
+    api_base_url: str | None = None
     api_reachable: bool | None = None
+    server_version: str | None = None
+    models_available: list[str] = Field(default_factory=list)
     running_models: list[OllamaProcessInfo] = Field(default_factory=list)
     accelerator_indicators: list[str] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
@@ -103,11 +125,25 @@ class Recommendation(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RuntimeRunResult(BaseModel):
+    mode: RuntimeMode
+    status: ProbeStatus
+    endpoint: str | None = None
+    command: list[str] = Field(default_factory=list)
+    note: str = ""
+    launched: bool = False
+    reference: str | None = None
+    details: list[str] = Field(default_factory=list)
+
+
 class BenchmarkResult(BaseModel):
     mode: RuntimeMode
     status: ProbeStatus
     note: str
+    model: str | None = None
+    endpoint: str | None = None
     metrics: dict[str, float | int | str | None] = Field(default_factory=dict)
+    observations: list[str] = Field(default_factory=list)
 
 
 class AuditReport(BaseModel):

@@ -9,33 +9,46 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ollama_env_audit.application import InspectionService
+from ollama_env_audit.application import InspectionService, LocalWebService, RuntimeService, ServiceContainer
+from ollama_env_audit.benchmark import BenchmarkService
 from ollama_env_audit.config import AppConfig
+from ollama_env_audit.domain.enums import RuntimeMode
 from ollama_env_audit.infrastructure import SubprocessExecutor, configure_logging
 from ollama_env_audit.probes import DockerProbe, OllamaProbe, WindowsProbe, WSLProbe
 from ollama_env_audit.recommendation import RecommendationEngine
-from ollama_env_audit.reporting import JsonReportRenderer, MarkdownReportRenderer
+from ollama_env_audit.reporting import HtmlReportRenderer, JsonReportRenderer, MarkdownReportRenderer
+from ollama_env_audit.runtime import DockerWSLLauncher, WindowsNativeLauncher, WSLNativeLauncher
 
-ServiceFactory = Callable[[AppConfig], InspectionService]
+ServiceFactory = Callable[[AppConfig], ServiceContainer]
 console = Console()
 
 
-def create_default_service(config: AppConfig) -> InspectionService:
+def create_default_services(config: AppConfig) -> ServiceContainer:
     executor = SubprocessExecutor()
-    return InspectionService(
+    inspection = InspectionService(
         windows_probe=WindowsProbe(executor, config),
         wsl_probe=WSLProbe(executor, config),
         docker_probe=DockerProbe(executor, config),
         ollama_probe=OllamaProbe(executor, config),
         recommendation_engine=RecommendationEngine(),
     )
+    launchers = {
+        RuntimeMode.WINDOWS_NATIVE: WindowsNativeLauncher(executor, config),
+        RuntimeMode.WSL_NATIVE: WSLNativeLauncher(executor, config),
+        RuntimeMode.DOCKER_WSL: DockerWSLLauncher(executor, config),
+    }
+    return ServiceContainer(
+        inspection=inspection,
+        runtime=RuntimeService(launchers),
+        benchmark=BenchmarkService(config, launchers),
+    )
 
 
-def create_app(service_factory: ServiceFactory | None = None) -> typer.Typer:
-    service_builder = service_factory or create_default_service
+def create_app(service_factory: Optional[ServiceFactory] = None) -> typer.Typer:
+    service_builder = service_factory or create_default_services
     app = typer.Typer(help="Audit Ollama runtimes across Windows, WSL2, and Docker.")
 
-    def load_service(config_path: Path | None) -> InspectionService:
+    def load_services(config_path: Optional[Path]) -> ServiceContainer:
         config = AppConfig.from_path(config_path) if config_path else AppConfig()
         return service_builder(config)
 
@@ -44,7 +57,7 @@ def create_app(service_factory: ServiceFactory | None = None) -> typer.Typer:
         config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file."),
         output_json: bool = typer.Option(False, "--json", help="Render the full report as JSON."),
     ) -> None:
-        report = load_service(config_path).inspect()
+        report = load_services(config_path).inspection.inspect()
         if output_json:
             console.print(JsonReportRenderer().render(report))
             return
@@ -57,14 +70,11 @@ def create_app(service_factory: ServiceFactory | None = None) -> typer.Typer:
         table.add_row("Docker", report.docker.status.value, ", ".join(obs.message for obs in report.docker.observations) or "n/a")
         table.add_row("Ollama", report.ollama.status.value, ", ".join(obs.message for obs in report.ollama.observations) or "n/a")
         console.print(table)
-        if report.recommendation.recommended_mode:
-            console.print(f"Recommended mode: [bold]{report.recommendation.recommended_mode.value}[/bold]")
-        else:
-            console.print("Recommended mode: [bold]none[/bold]")
+        console.print(f"Recommended mode: [bold]{report.recommendation.recommended_mode.value if report.recommendation.recommended_mode else 'none'}[/bold]")
 
     @app.command()
     def recommend(config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file.")) -> None:
-        report = load_service(config_path).inspect()
+        report = load_services(config_path).inspection.inspect()
         recommendation = report.recommendation
         console.print(f"Mode: [bold]{recommendation.recommended_mode.value if recommendation.recommended_mode else 'none'}[/bold]")
         console.print(f"Confidence: {recommendation.confidence.value}")
@@ -75,18 +85,66 @@ def create_app(service_factory: ServiceFactory | None = None) -> typer.Typer:
 
     @app.command()
     def report(
-        format: str = typer.Option("markdown", "--format", help="markdown or json"),
+        format: str = typer.Option("markdown", "--format", help="markdown, json, or html"),
         output: Optional[Path] = typer.Option(None, "--output", help="Optional file output path."),
         config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file."),
     ) -> None:
-        report_obj = load_service(config_path).inspect()
-        renderer = MarkdownReportRenderer() if format == "markdown" else JsonReportRenderer()
+        report_obj = load_services(config_path).inspection.inspect()
+        if format == "json":
+            renderer = JsonReportRenderer()
+        elif format == "html":
+            renderer = HtmlReportRenderer()
+        else:
+            renderer = MarkdownReportRenderer()
         rendered = renderer.render(report_obj)
         if output:
             output.write_text(rendered, encoding="utf-8")
             console.print(f"Report written to {output}")
             return
         console.print(rendered)
+
+    @app.command()
+    def benchmark(
+        mode: RuntimeMode = typer.Option(..., "--mode", help="Runtime mode to benchmark."),
+        model: Optional[str] = typer.Option(None, "--model", help="Override the default Ollama model."),
+        prompt: Optional[str] = typer.Option(None, "--prompt", help="Override the default benchmark prompt."),
+        config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file."),
+    ) -> None:
+        result = load_services(config_path).benchmark.benchmark(mode, model=model, prompt=prompt)
+        console.print(f"Benchmark mode: [bold]{mode.value}[/bold]")
+        console.print(f"Status: {result.status.value}")
+        console.print(result.note)
+        for key, value in result.metrics.items():
+            console.print(f"- {key}: {value}")
+        for item in result.observations:
+            console.print(f"- {item}")
+
+    @app.command()
+    def run(
+        mode: RuntimeMode = typer.Option(..., "--mode", help="Runtime mode to launch."),
+        dry_run: bool = typer.Option(True, "--dry-run/--execute", help="Only print the launch plan unless --execute is passed."),
+        config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file."),
+    ) -> None:
+        result = load_services(config_path).runtime.launch(mode, dry_run=dry_run)
+        console.print(f"Run mode: [bold]{mode.value}[/bold]")
+        console.print(f"Status: {result.status.value}")
+        console.print(f"Endpoint: {result.endpoint}")
+        console.print(f"Command: {' '.join(result.command)}")
+        console.print(result.note)
+        for detail in result.details:
+            console.print(f"- {detail}")
+        if result.reference:
+            console.print(f"Reference: {result.reference}")
+
+    @app.command("serve-web")
+    def serve_web(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host for the local web UI."),
+        port: int = typer.Option(8765, "--port", help="Bind port for the local web UI."),
+        config_path: Optional[Path] = typer.Option(None, "--config", help="Path to a JSON config file."),
+    ) -> None:
+        services = load_services(config_path)
+        console.print(f"Serving web UI on http://{host}:{port}")
+        LocalWebService(services.inspection).serve(host, port)
 
     return app
 

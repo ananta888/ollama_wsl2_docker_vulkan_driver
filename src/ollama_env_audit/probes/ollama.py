@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 
 import httpx
 
@@ -23,6 +22,7 @@ class OllamaProbe(BaseProbe):
 
     def run(self) -> OllamaInfo:
         observations: list[Observation] = []
+        base_url = self._config.ollama.base_url.rstrip("/")
         version_result = self._executor.execute(["ollama", "--version"], timeout=self._config.commands.timeout_seconds)
         binary_available = version_result.succeeded
         version = self._extract_version(version_result.stdout) if binary_available else None
@@ -35,14 +35,31 @@ class OllamaProbe(BaseProbe):
                 )
             )
 
-        api_reachable = None
+        api_reachable = False
+        server_version = None
+        models_available: list[str] = []
         try:
-            response = httpx.get(
-                f"{self._config.ollama.base_url.rstrip('/')}/api/tags",
+            tags_response = httpx.get(
+                f"{base_url}/api/tags",
                 timeout=self._config.ollama.timeout_seconds,
             )
-            api_reachable = response.status_code == 200
-        except httpx.HTTPError as exc:
+            api_reachable = tags_response.status_code == 200
+            if api_reachable:
+                tags_payload = tags_response.json()
+                models_available = [
+                    model.get("name")
+                    for model in tags_payload.get("models", [])
+                    if isinstance(model, dict) and model.get("name")
+                ]
+                version_response = httpx.get(
+                    f"{base_url}/api/version",
+                    timeout=self._config.ollama.timeout_seconds,
+                )
+                if version_response.status_code == 200:
+                    version_payload = version_response.json()
+                    if isinstance(version_payload, dict):
+                        server_version = version_payload.get("version")
+        except (httpx.HTTPError, ValueError) as exc:
             observations.append(
                 Observation(
                     severity=Severity.INFO,
@@ -50,7 +67,6 @@ class OllamaProbe(BaseProbe):
                     evidence=str(exc),
                 )
             )
-            api_reachable = False
 
         running_models: list[OllamaProcessInfo] = []
         accelerator_indicators: list[str] = []
@@ -71,12 +87,31 @@ class OllamaProbe(BaseProbe):
                 )
             )
 
+        if api_reachable and not models_available:
+            observations.append(
+                Observation(
+                    severity=Severity.INFO,
+                    message="Ollama API is reachable, but no models were listed by /api/tags.",
+                )
+            )
+        if accelerator_indicators:
+            observations.append(
+                Observation(
+                    severity=Severity.INFO,
+                    message="Ollama process output contains GPU-labelled processors.",
+                    evidence=", ".join(accelerator_indicators),
+                )
+            )
+
         status = ProbeStatus.OK if binary_available or api_reachable else ProbeStatus.UNAVAILABLE
         return OllamaInfo(
             status=status,
             binary_available=binary_available,
             version=version,
+            api_base_url=base_url,
             api_reachable=api_reachable,
+            server_version=server_version,
+            models_available=models_available,
             running_models=running_models,
             accelerator_indicators=accelerator_indicators,
             observations=observations,

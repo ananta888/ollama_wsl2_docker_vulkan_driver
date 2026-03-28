@@ -10,6 +10,24 @@
   "docker": {
     "smoke_test_image": "hello-world",
     "allow_image_pull": false,
-    "run_smoke_test": true
+    "run_smoke_test": true,
+    "runtime_image": "ollama/ollama:latest",
+    "container_name": "ollama-env-audit",
+    "published_port": 11434
+  },
+  "benchmark": {
+    "default_model": "llama3.2:3b",
+    "prompt": "Summarize the current machine in one sentence.",
+    "request_timeout_seconds": 90,
+    "num_predict": 64
+  },
+  "runtime": {
+    "windows_base_url": "http://127.0.0.1:11434",
+    "wsl_base_url": "http://127.0.0.1:11434",
+    "docker_base_url": "http://127.0.0.1:11434"
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 8765
   }
 }

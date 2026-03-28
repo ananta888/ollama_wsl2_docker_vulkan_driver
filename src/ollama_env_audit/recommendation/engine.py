@@ -23,12 +23,11 @@ class RecommendationEngine:
         docker: DockerInfo,
         ollama: OllamaInfo,
     ) -> list[RuntimeAssessment]:
-        assessments = [
+        return [
             self._assess_windows_native(windows, ollama),
             self._assess_wsl_native(wsl, ollama),
-            self._assess_docker_wsl(docker, wsl),
+            self._assess_docker_wsl(docker, wsl, ollama),
         ]
-        return assessments
 
     def recommend(self, assessments: list[RuntimeAssessment]) -> Recommendation:
         scored = [(assessment, self._score(assessment)) for assessment in assessments if assessment.available]
@@ -43,18 +42,23 @@ class RecommendationEngine:
         scored.sort(key=lambda item: item[1], reverse=True)
         best, best_score = scored[0]
         next_score = scored[1][1] if len(scored) > 1 else 0
-        confidence = ConfidenceLevel.HIGH if best_score >= 60 and (best_score - next_score) >= 10 else ConfidenceLevel.MEDIUM if best_score >= 35 else ConfidenceLevel.LOW
+        if best_score >= 60 and (best_score - next_score) >= 10:
+            confidence = ConfidenceLevel.HIGH
+        elif best_score >= 35:
+            confidence = ConfidenceLevel.MEDIUM
+        else:
+            confidence = ConfidenceLevel.LOW
+
         rationale = list(best.reasons)
         if best.supports_gpu is True:
             rationale.insert(0, "This mode has the strongest explicit GPU evidence in the current inspection.")
         elif best.supports_gpu is False:
-            rationale.insert(0, "This mode is usable, but current evidence points to CPU-only execution.")
-        warnings = list(best.risks)
+            rationale.insert(0, "This mode is usable, but current evidence points to CPU-only or unverified acceleration.")
         return Recommendation(
             recommended_mode=best.mode,
             confidence=confidence,
             rationale=rationale,
-            warnings=warnings,
+            warnings=list(best.risks),
         )
 
     def _assess_windows_native(self, windows: WindowsInfo, ollama: OllamaInfo) -> RuntimeAssessment:
@@ -68,6 +72,8 @@ class RecommendationEngine:
             reasons.append("No explicit Windows GPU evidence was collected.")
         if ollama.accelerator_indicators:
             reasons.append("Current Ollama process list includes GPU-labelled processors.")
+        if ollama.server_version:
+            reasons.append(f"Ollama API responded with server version {ollama.server_version}.")
         confidence = ConfidenceLevel.HIGH if supports_gpu else ConfidenceLevel.MEDIUM if available else ConfidenceLevel.LOW
         return RuntimeAssessment(
             mode=RuntimeMode.WINDOWS_NATIVE,
@@ -83,6 +89,8 @@ class RecommendationEngine:
         supports_gpu = wsl.gpu_support_likely if available else None
         reasons = []
         risks = [obs.message for obs in wsl.observations]
+        if available and wsl.gpu_evidence:
+            reasons.extend(wsl.gpu_evidence[:3])
         if available and wsl.gpu_support_likely:
             reasons.append("WSL exposes GPU-relevant devices and at least one supporting user-space tool.")
         elif available:
@@ -101,7 +109,7 @@ class RecommendationEngine:
             risks=risks,
         )
 
-    def _assess_docker_wsl(self, docker: DockerInfo, wsl: WSLInfo) -> RuntimeAssessment:
+    def _assess_docker_wsl(self, docker: DockerInfo, wsl: WSLInfo, ollama: OllamaInfo) -> RuntimeAssessment:
         available = bool(docker.engine_reachable)
         supports_gpu = docker.gpu_support_likely if available else None
         reasons = []
@@ -112,10 +120,12 @@ class RecommendationEngine:
             reasons.append("Docker engine is reachable, but container execution is only partially verified.")
         else:
             reasons.append("Docker engine is not reachable from the current environment.")
-        if supports_gpu:
-            reasons.append("Docker metadata exposed at least one GPU-related signal.")
-        else:
-            reasons.append("No explicit Docker GPU evidence was collected; GPU use is treated as unverified.")
+        if docker.gpu_evidence:
+            reasons.extend(docker.gpu_evidence[:3])
+        if ollama.models_available:
+            reasons.append(f"Ollama API currently exposes {len(ollama.models_available)} model(s).")
+        if not supports_gpu:
+            reasons.append("No explicit Docker GPU evidence was collected; acceleration remains unverified.")
         if wsl.is_wsl and not wsl.gpu_support_likely:
             risks.append("WSL GPU prerequisites are incomplete, which weakens docker-wsl viability.")
         confidence = ConfidenceLevel.MEDIUM if available else ConfidenceLevel.LOW

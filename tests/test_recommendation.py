@@ -29,7 +29,7 @@ def test_recommendation_prefers_wsl_when_windows_is_unavailable() -> None:
     engine = RecommendationEngine()
     assessments = engine.assess_modes(
         windows=WindowsInfo(status=ProbeStatus.UNAVAILABLE),
-        wsl=WSLInfo(status=ProbeStatus.OK, is_wsl=True, gpu_support_likely=True),
+        wsl=WSLInfo(status=ProbeStatus.OK, is_wsl=True, gpu_support_likely=True, gpu_evidence=["Device node detected: /dev/dxg"]),
         docker=DockerInfo(status=ProbeStatus.OK, engine_reachable=True, gpu_support_likely=False),
         ollama=OllamaInfo(status=ProbeStatus.OK, binary_available=True),
     )

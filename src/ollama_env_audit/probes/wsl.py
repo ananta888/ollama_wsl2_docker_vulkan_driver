@@ -39,9 +39,22 @@ class WSLProbe(BaseProbe):
 
         distribution = self._read_distribution()
         devices = {path: Path(path).exists() for path in ("/dev/dxg", "/dev/kfd", "/dev/dri")}
+        device_details = {path: self._describe_path(Path(path)) for path in devices}
         tools = {name: shutil.which(name) is not None for name in ("rocminfo", "rocm-smi", "vulkaninfo")}
-        gpu_support_likely = bool(is_wsl and any(devices.values()) and any(tools.values()))
+        tool_details = {
+            name: self._tool_summary(name)
+            for name, available in tools.items()
+            if available
+        }
 
+        gpu_evidence: list[str] = []
+        for path, exists in devices.items():
+            if exists:
+                gpu_evidence.append(f"Device node detected: {path}")
+        for name, summary in tool_details.items():
+            gpu_evidence.append(f"Tool available: {name} ({summary})")
+
+        gpu_support_likely = bool(is_wsl and any(devices.values()) and any(tools.values()))
         observations: list[Observation] = []
         status = ProbeStatus.OK if is_wsl else ProbeStatus.WARNING
         if not is_wsl:
@@ -66,6 +79,13 @@ class WSLProbe(BaseProbe):
                     message="GPU device nodes exist, but ROCm/Vulkan user-space tools were not found.",
                 )
             )
+        if is_wsl and gpu_support_likely:
+            observations.append(
+                Observation(
+                    severity=Severity.INFO,
+                    message="WSL exposes both GPU-related devices and at least one supporting user-space tool.",
+                )
+            )
 
         return WSLInfo(
             status=status,
@@ -73,10 +93,37 @@ class WSLProbe(BaseProbe):
             kernel=kernel,
             is_wsl=is_wsl,
             devices=devices,
+            device_details=device_details,
             tools=tools,
+            tool_details=tool_details,
             gpu_support_likely=gpu_support_likely,
+            gpu_evidence=gpu_evidence,
             observations=observations,
         )
+
+    def _tool_summary(self, executable: str) -> str:
+        if executable == "vulkaninfo":
+            result = self._executor.execute([executable, "--summary"], timeout=self._config.commands.timeout_seconds)
+        elif executable == "rocm-smi":
+            result = self._executor.execute([executable, "--showproductname"], timeout=self._config.commands.timeout_seconds)
+        else:
+            result = self._executor.execute([executable], timeout=self._config.commands.timeout_seconds)
+
+        if result.stdout.strip():
+            return result.stdout.strip().splitlines()[0][:180]
+        if result.stderr.strip():
+            return result.stderr.strip().splitlines()[0][:180]
+        return "no output"
+
+    @staticmethod
+    def _describe_path(path: Path) -> str:
+        if not path.exists():
+            return "missing"
+        try:
+            stat = path.stat()
+        except OSError:
+            return "present"
+        return f"present mode={oct(stat.st_mode & 0o777)}"
 
     @staticmethod
     def _read_distribution() -> str | None:
