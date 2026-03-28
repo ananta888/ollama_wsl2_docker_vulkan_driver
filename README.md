@@ -49,6 +49,32 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
+## Docker in WSL2 mit AMD iGPU
+
+Der aktuell validierte GPU-Pfad fuer `docker-wsl` in Ubuntu 24.04 unter WSL2 nutzt Mesa `Dozen` aus `ppa:kisak/kisak-mesa`.
+
+Image bauen:
+
+```bash
+cd examples
+docker build -t ollama-wsl-amd:latest -f Dockerfile.ollama-wsl-amd .
+```
+
+Container starten:
+
+```bash
+cd examples
+docker compose -f docker-compose.wsl-amd.yml up -d --build
+```
+
+Erwartetes Erfolgssignal:
+
+```bash
+docker exec ollama-wsl-amd vulkaninfo --summary
+```
+
+Dort sollte `driverName = Dozen` und `deviceName = Microsoft Direct3D12 (AMD Radeon(TM) 780M)` erscheinen, nicht nur `llvmpipe`.
+
 ## CLI
 
 ```bash
@@ -77,6 +103,7 @@ ollama-env-audit serve-web --host 127.0.0.1 --port 8765
 - `run --execute` startet bewusst nur klar definierte Kommandos und nutzt keine dynamisch zusammengebauten Shell-Strings.
 - Ein erfolgreicher Runtime-Start beweist noch keine GPU-Beschleunigung. Diese Aussage entsteht erst aus kombinierter Evidenz und Benchmarking.
 - Docker-Runs nutzen ein persistentes Volume fuer `/root/.ollama`, damit einmal geladene Modelle fuer spaetere Testlaeufe wiederverwendbar bleiben.
+- Der validierte AMD-WSL2-Docker-Weg braucht ein vorbereitetes Image mit Kisak Mesa `Dozen`, z. B. `examples/Dockerfile.ollama-wsl-amd`.
 
 ## Reporting
 
@@ -89,6 +116,8 @@ ollama-env-audit serve-web --host 127.0.0.1 --port 8765
 ### Docker meldet keine GPU
 
 Das Tool nimmt nicht an, dass Docker unter WSL2 automatisch GPU-Zugriff hat. Wenn nur Device-Kandidaten, aber keine starke Laufzeitevidenz vorliegen, bleibt die Bewertung bewusst vorsichtig.
+
+Fuer AMD unter WSL2 reicht das Stock-Image `ollama/ollama:latest` in der Regel nicht aus. Der reproduzierbar funktionierende Weg in diesem Repo ist ein auf `ollama/ollama` basiertes Image mit `ppa:kisak/kisak-mesa`, `mesa-vulkan-drivers`, `OLLAMA_VULKAN=1`, `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/dzn_icd.json` und dem Mount `/usr/lib/wsl:/usr/lib/wsl:ro`.
 
 ### WSL2 hat keine `/dev/dxg`-, `/dev/kfd`- oder `/dev/dri`-Devices
 

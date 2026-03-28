@@ -11,10 +11,17 @@
     "smoke_test_image": "hello-world",
     "allow_image_pull": false,
     "run_smoke_test": true,
-    "runtime_image": "ollama/ollama:latest",
+    "runtime_image": "ollama-wsl-amd:latest",
     "container_name": "ollama-env-audit",
     "published_port": 11434,
-    "model_cache_volume": "ollama-env-audit-model-cache"
+    "model_cache_volume": "ollama-env-audit-model-cache",
+    "mount_wsl_lib_directory": true,
+    "wsl_lib_directory": "/usr/lib/wsl",
+    "ld_library_path": "/usr/lib/wsl/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64",
+    "enable_ollama_vulkan": true,
+    "force_dozen_icd": true,
+    "dozen_icd_path": "/usr/share/vulkan/icd.d/dzn_icd.json",
+    "mesa_d3d12_default_adapter_name": "AMD Radeon(TM) 780M"
   },
   "benchmark": {
     "default_model": "llama3.2:3b",

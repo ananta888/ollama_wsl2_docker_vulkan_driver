@@ -70,6 +70,12 @@ class WSLInfo(BaseModel):
     device_details: dict[str, str] = Field(default_factory=dict)
     tools: dict[str, bool] = Field(default_factory=dict)
     tool_details: dict[str, str] = Field(default_factory=dict)
+    vulkan_device_name: str | None = None
+    vulkan_driver_name: str | None = None
+    vulkan_uses_cpu: bool | None = None
+    wsl_lib_directory_present: bool = False
+    dzn_icd_present: bool = False
+    wsl_dozen_ready: bool = False
     gpu_support_likely: bool | None = None
     gpu_evidence: list[str] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)

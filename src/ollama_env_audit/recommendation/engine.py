@@ -87,10 +87,16 @@ class RecommendationEngine:
     def _assess_wsl_native(self, wsl: WSLInfo, ollama: OllamaInfo) -> RuntimeAssessment:
         available = wsl.status != ProbeStatus.UNAVAILABLE and wsl.is_wsl
         supports_gpu = wsl.gpu_support_likely if available else None
+        if available and wsl.vulkan_uses_cpu:
+            supports_gpu = False
+        if available and wsl.wsl_dozen_ready:
+            supports_gpu = True
         reasons = []
         risks = [obs.message for obs in wsl.observations]
         if available and wsl.gpu_evidence:
             reasons.extend(wsl.gpu_evidence[:3])
+        if available and wsl.wsl_dozen_ready:
+            reasons.append("WSL Vulkan is already using Mesa Dozen over Microsoft Direct3D12.")
         if available and wsl.gpu_support_likely:
             reasons.append("WSL exposes GPU-relevant devices and at least one supporting user-space tool.")
         elif available:
@@ -99,6 +105,14 @@ class RecommendationEngine:
             reasons.append("The current Linux environment does not provide verified WSL2 evidence.")
         if ollama.binary_available:
             reasons.append("Ollama is installed in the current Linux environment.")
+        if available and wsl.devices.get("/dev/dxg", False) and not wsl.dzn_icd_present:
+            risks.append(
+                "WSL currently has GPU device visibility but no Dozen Vulkan ICD. Install a Dozen-enabled Mesa build such as ppa:kisak/kisak-mesa and re-run vulkaninfo --summary."
+            )
+        if available and wsl.vulkan_uses_cpu and wsl.devices.get("/dev/dxg", False):
+            risks.append(
+                "WSL Vulkan is still resolving to llvmpipe/CPU. The validated remediation in this project is Kisak Mesa plus dzn_icd.json on Ubuntu 24.04."
+            )
         confidence = ConfidenceLevel.HIGH if supports_gpu else ConfidenceLevel.MEDIUM if available else ConfidenceLevel.LOW
         return RuntimeAssessment(
             mode=RuntimeMode.WSL_NATIVE,
@@ -122,12 +136,25 @@ class RecommendationEngine:
             reasons.append("Docker engine is not reachable from the current environment.")
         if docker.gpu_evidence:
             reasons.extend(docker.gpu_evidence[:3])
+        if available and docker.can_run_containers and wsl.wsl_dozen_ready:
+            supports_gpu = True
+            reasons.append("WSL has a validated Mesa Dozen Vulkan path that Docker containers can reuse.")
+        elif available and wsl.wsl_dozen_ready:
+            reasons.append("WSL has a validated Mesa Dozen Vulkan path; Docker should mount /usr/lib/wsl and use a Dozen-enabled image.")
         if ollama.models_available:
             reasons.append(f"Ollama API currently exposes {len(ollama.models_available)} model(s).")
         if not supports_gpu:
             reasons.append("No explicit Docker GPU evidence was collected; acceleration remains unverified.")
         if wsl.is_wsl and not wsl.gpu_support_likely:
             risks.append("WSL GPU prerequisites are incomplete, which weakens docker-wsl viability.")
+        if wsl.is_wsl and wsl.devices.get("/dev/dxg", False) and not wsl.wsl_dozen_ready:
+            risks.append(
+                "Docker-on-WSL will remain CPU-bound until WSL Vulkan stops using llvmpipe and exposes Mesa Dozen."
+            )
+        if available and wsl.wsl_dozen_ready:
+            risks.append(
+                "The validated docker-wsl path requires an image with mesa-vulkan-drivers/Dozen inside the container plus the mount /usr/lib/wsl:/usr/lib/wsl:ro."
+            )
         confidence = ConfidenceLevel.MEDIUM if available else ConfidenceLevel.LOW
         return RuntimeAssessment(
             mode=RuntimeMode.DOCKER_WSL,

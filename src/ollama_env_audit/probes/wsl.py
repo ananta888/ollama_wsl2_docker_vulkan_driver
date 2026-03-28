@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 from pathlib import Path
 
@@ -41,11 +42,31 @@ class WSLProbe(BaseProbe):
         devices = {path: Path(path).exists() for path in ("/dev/dxg", "/dev/kfd", "/dev/dri")}
         device_details = {path: self._describe_path(Path(path)) for path in devices}
         tools = {name: shutil.which(name) is not None for name in ("rocminfo", "rocm-smi", "vulkaninfo")}
-        tool_details = {
-            name: self._tool_summary(name)
-            for name, available in tools.items()
-            if available
-        }
+        tool_details: dict[str, str] = {}
+        vulkan_device_name: str | None = None
+        vulkan_driver_name: str | None = None
+        vulkan_uses_cpu: bool | None = None
+        if tools["vulkaninfo"]:
+            vulkan_result = self._executor.execute(["vulkaninfo", "--summary"], timeout=self._config.commands.timeout_seconds)
+            vulkan_output = vulkan_result.stdout.strip() or vulkan_result.stderr.strip()
+            tool_details["vulkaninfo"] = self._summarize_output(vulkan_output)
+            vulkan_device_name, vulkan_driver_name, vulkan_uses_cpu = self._parse_vulkan_summary(vulkan_output)
+        for name in ("rocminfo", "rocm-smi"):
+            if tools[name]:
+                tool_details[name] = self._tool_summary(name)
+
+        wsl_lib_directory_present = Path("/usr/lib/wsl/lib").exists()
+        dzn_icd_present = Path("/usr/share/vulkan/icd.d/dzn_icd.json").exists()
+        wsl_dozen_ready = bool(
+            is_wsl
+            and devices.get("/dev/dxg", False)
+            and wsl_lib_directory_present
+            and dzn_icd_present
+            and vulkan_driver_name
+            and vulkan_driver_name.lower() == "dozen"
+            and vulkan_device_name
+            and "microsoft direct3d12" in vulkan_device_name.lower()
+        )
 
         gpu_evidence: list[str] = []
         for path, exists in devices.items():
@@ -53,8 +74,24 @@ class WSLProbe(BaseProbe):
                 gpu_evidence.append(f"Device node detected: {path}")
         for name, summary in tool_details.items():
             gpu_evidence.append(f"Tool available: {name} ({summary})")
+        if wsl_lib_directory_present:
+            gpu_evidence.append("WSL shared graphics libraries detected: /usr/lib/wsl/lib")
+        if dzn_icd_present:
+            gpu_evidence.append("Dozen Vulkan ICD detected: /usr/share/vulkan/icd.d/dzn_icd.json")
+        if vulkan_driver_name:
+            gpu_evidence.append(f"Vulkan driver detected: {vulkan_driver_name}")
+        if vulkan_device_name:
+            gpu_evidence.append(f"Vulkan device detected: {vulkan_device_name}")
 
-        gpu_support_likely = bool(is_wsl and any(devices.values()) and any(tools.values()))
+        gpu_support_likely = bool(
+            is_wsl
+            and any(devices.values())
+            and (
+                wsl_dozen_ready
+                or any(name in tools and tools[name] for name in ("rocminfo", "rocm-smi"))
+                or any(tools.values())
+            )
+        )
         observations: list[Observation] = []
         status = ProbeStatus.OK if is_wsl else ProbeStatus.WARNING
         if not is_wsl:
@@ -79,6 +116,30 @@ class WSLProbe(BaseProbe):
                     message="GPU device nodes exist, but ROCm/Vulkan user-space tools were not found.",
                 )
             )
+        if is_wsl and devices.get("/dev/dxg", False) and not dzn_icd_present:
+            observations.append(
+                Observation(
+                    severity=Severity.WARNING,
+                    message="WSL sees /dev/dxg, but the Dozen Vulkan ICD is missing.",
+                    evidence="Install a Mesa build with Dozen support, for example ppa:kisak/kisak-mesa on Ubuntu 24.04.",
+                )
+            )
+        if is_wsl and devices.get("/dev/dxg", False) and vulkan_uses_cpu:
+            observations.append(
+                Observation(
+                    severity=Severity.WARNING,
+                    message="Vulkan is falling back to llvmpipe/CPU despite visible WSL GPU devices.",
+                    evidence="A Dozen-enabled Mesa build is likely required before Linux or Docker Ollama can use the AMD GPU.",
+                )
+            )
+        if wsl_dozen_ready:
+            observations.append(
+                Observation(
+                    severity=Severity.INFO,
+                    message="WSL Vulkan is using Mesa Dozen over Microsoft Direct3D12.",
+                    evidence=vulkan_device_name,
+                )
+            )
         if is_wsl and gpu_support_likely:
             observations.append(
                 Observation(
@@ -96,6 +157,12 @@ class WSLProbe(BaseProbe):
             device_details=device_details,
             tools=tools,
             tool_details=tool_details,
+            vulkan_device_name=vulkan_device_name,
+            vulkan_driver_name=vulkan_driver_name,
+            vulkan_uses_cpu=vulkan_uses_cpu,
+            wsl_lib_directory_present=wsl_lib_directory_present,
+            dzn_icd_present=dzn_icd_present,
+            wsl_dozen_ready=wsl_dozen_ready,
             gpu_support_likely=gpu_support_likely,
             gpu_evidence=gpu_evidence,
             observations=observations,
@@ -114,6 +181,27 @@ class WSLProbe(BaseProbe):
         if result.stderr.strip():
             return result.stderr.strip().splitlines()[0][:180]
         return "no output"
+
+    @staticmethod
+    def _summarize_output(output: str) -> str:
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        return lines[0][:180] if lines else "no output"
+
+    @staticmethod
+    def _parse_vulkan_summary(raw: str) -> tuple[str | None, str | None, bool | None]:
+        normalized = raw.replace("\r", "")
+        device_match = re.search(r"deviceName\s*=\s*(.+)", normalized)
+        driver_match = re.search(r"driverName\s*=\s*(.+)", normalized)
+        device_type_match = re.search(r"deviceType\s*=\s*(.+)", normalized)
+        device_name = device_match.group(1).strip() if device_match else None
+        driver_name = driver_match.group(1).strip() if driver_match else None
+        device_type = device_type_match.group(1).strip().lower() if device_type_match else None
+        uses_cpu = None
+        if device_type is not None:
+            uses_cpu = "cpu" in device_type
+        elif device_name is not None:
+            uses_cpu = "llvmpipe" in device_name.lower()
+        return device_name, driver_name, uses_cpu
 
     @staticmethod
     def _describe_path(path: Path) -> str:

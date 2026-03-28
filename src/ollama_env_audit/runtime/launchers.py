@@ -103,6 +103,29 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
             "-v",
             f"{self._config.docker.model_cache_volume}:/root/.ollama",
         ]
+        if self._config.docker.mount_wsl_lib_directory and Path(self._config.docker.wsl_lib_directory).exists():
+            command.extend(
+                [
+                    "-v",
+                    f"{self._config.docker.wsl_lib_directory}:{self._config.docker.wsl_lib_directory}:ro",
+                    "-e",
+                    f"LD_LIBRARY_PATH={self._config.docker.ld_library_path}",
+                ]
+            )
+        if self._config.docker.enable_ollama_vulkan:
+            command.extend(["-e", "OLLAMA_VULKAN=1"])
+        if self._config.docker.force_dozen_icd:
+            command.extend(["-e", f"VK_ICD_FILENAMES={self._config.docker.dozen_icd_path}"])
+        if self._config.docker.mesa_d3d12_default_adapter_name:
+            command.extend(
+                [
+                    "-e",
+                    (
+                        "MESA_D3D12_DEFAULT_ADAPTER_NAME="
+                        f"{self._config.docker.mesa_d3d12_default_adapter_name}"
+                    ),
+                ]
+            )
         for device in ("/dev/dxg", "/dev/kfd", "/dev/dri"):
             if Path(device).exists():
                 command.extend(["--device", device])
@@ -120,6 +143,7 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
                 note="Dry-run only. No Docker container was started.",
                 details=[
                     "Device pass-through flags are included only when host device nodes are visible from Linux.",
+                    "GPU acceleration requires an image with Kisak Mesa Dozen support, such as examples/Dockerfile.ollama-wsl-amd.",
                     f"Model cache volume: {self._config.docker.model_cache_volume}",
                 ],
             )
@@ -136,6 +160,7 @@ class DockerWSLLauncher(BaseRuntimeLauncher):
                 reference=result.stdout.strip() or None,
                 details=[
                     f"Model cache volume: {self._config.docker.model_cache_volume}",
+                    f"Runtime image: {self._config.docker.runtime_image}",
                     "Validate actual GPU use from inside the container before trusting acceleration.",
                 ],
             )

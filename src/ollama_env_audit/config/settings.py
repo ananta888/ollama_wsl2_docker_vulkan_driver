@@ -24,10 +24,17 @@ class DockerSettings(BaseModel):
     smoke_test_image: str = "hello-world"
     allow_image_pull: bool = False
     run_smoke_test: bool = True
-    runtime_image: str = "ollama/ollama:latest"
+    runtime_image: str = "ollama-wsl-amd:latest"
     container_name: str = "ollama-env-audit"
     published_port: int = Field(default=11434, ge=1, le=65535)
     model_cache_volume: str = "ollama-env-audit-model-cache"
+    mount_wsl_lib_directory: bool = True
+    wsl_lib_directory: str = "/usr/lib/wsl"
+    ld_library_path: str = "/usr/lib/wsl/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
+    enable_ollama_vulkan: bool = True
+    force_dozen_icd: bool = True
+    dozen_icd_path: str = "/usr/share/vulkan/icd.d/dzn_icd.json"
+    mesa_d3d12_default_adapter_name: str | None = None
 
 
 class BenchmarkSettings(BaseModel):
